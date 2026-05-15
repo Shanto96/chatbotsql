@@ -12,17 +12,28 @@ from langgraph.prebuilt import create_react_agent
 # ── Configuration ────────────────────────────────────────────────────────────
 load_dotenv()  # loads GOOGLE_API_KEY from .env file
 
-HOST = "localhost"
-PORT = "3306"
-USERNAME = "root"
-PASSWORD = ""
-DATABASE = "text_to_sql"
-MYSQL_URI = f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}"
+# Use DATABASE_URL env var if set (production), otherwise local MySQL (development)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if DATABASE_URL:
+    # Production: use whatever DATABASE_URL points to (SQLite on Render)
+    db = SQLDatabase.from_uri(DATABASE_URL)
+else:
+    # Local development: use MySQL
+    HOST = "localhost"
+    PORT = "3306"
+    USERNAME = "root"
+    PASSWORD = ""
+    DATABASE = "text_to_sql"
+    MYSQL_URI = f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}"
+    db = SQLDatabase.from_uri(MYSQL_URI)
 
 # ── Initialise LangChain components once at startup ──────────────────────────
-db = SQLDatabase.from_uri(MYSQL_URI)
 llm = init_chat_model("gemini-2.5-flash", model_provider="google_genai")
 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+
+# Detect dialect (mysql or sqlite) for the agent prompt
+dialect = db.dialect
 
 prompt_template = ChatPromptTemplate.from_messages([
     ("system",
@@ -41,7 +52,7 @@ prompt_template = ChatPromptTemplate.from_messages([
     ("placeholder", "{messages}"),
 ])
 
-system_message = prompt_template.format(dialect="mysql", top_k=5)
+system_message = prompt_template.format(dialect=dialect, top_k=5)
 agent_executor = create_react_agent(llm, toolkit.get_tools(), prompt=system_message)
 
 # ── Flask App ────────────────────────────────────────────────────────────────
@@ -128,15 +139,17 @@ def table_data(table_name):
     try:
         from sqlalchemy import text
 
+        # Use double-quote quoting (works for both MySQL and SQLite)
+        q = lambda t: f'"{t}"'
         engine = db._engine
         with engine.connect() as conn:
-            result = conn.execute(text(f"SELECT * FROM `{table_name}` LIMIT 100"))
+            result = conn.execute(text(f"SELECT * FROM {q(table_name)} LIMIT 100"))
             columns = list(result.keys())
             rows = [list(row) for row in result.fetchall()]
 
         # Get total row count
         with engine.connect() as conn:
-            count_result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
+            count_result = conn.execute(text(f"SELECT COUNT(*) FROM {q(table_name)}"))
             total_rows = count_result.scalar()
 
         return jsonify({
