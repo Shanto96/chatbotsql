@@ -16,7 +16,16 @@
     const sidebar           = document.getElementById("sidebar");
     const menuToggle        = document.getElementById("menu-toggle");
 
+    // Table viewer DOM
+    const tableViewer   = document.getElementById("table-viewer");
+    const tvBackBtn     = document.getElementById("tv-back-btn");
+    const tvTableName   = document.getElementById("tv-table-name");
+    const tvRowCount    = document.getElementById("tv-row-count");
+    const tvBody        = document.getElementById("tv-body");
+    const tvAskBtn      = document.getElementById("tv-ask-btn");
+
     let isProcessing = false;
+    let currentTableName = "";
 
     // ── Fetch available tables on load ───────────────────────────────────
     async function loadTables() {
@@ -28,6 +37,7 @@
                 const el = document.createElement("div");
                 el.className = "table-item";
                 el.textContent = t;
+                el.addEventListener("click", () => openTableViewer(t));
                 tableList.appendChild(el);
             });
         } catch {
@@ -35,6 +45,132 @@
         }
     }
     loadTables();
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  Table Data Viewer
+    // ═════════════════════════════════════════════════════════════════════
+
+    async function openTableViewer(tableName) {
+        currentTableName = tableName;
+
+        // Highlight active table in sidebar
+        document.querySelectorAll(".table-item").forEach((el) => {
+            el.classList.toggle("active", el.textContent === tableName);
+        });
+
+        // Show viewer with loading state
+        tvTableName.textContent = tableName;
+        tvRowCount.textContent = "";
+        tvBody.innerHTML = `
+            <div class="tv-loading">
+                <div class="tv-spinner"></div>
+                <p>Loading table data…</p>
+            </div>
+        `;
+        tableViewer.classList.add("open");
+
+        // Close sidebar on mobile
+        sidebar.classList.remove("open");
+        removeOverlay();
+
+        // Fetch data
+        try {
+            const res = await fetch(`/api/table/${encodeURIComponent(tableName)}`);
+            const data = await res.json();
+
+            if (data.error) {
+                tvBody.innerHTML = `<div class="tv-error">⚠️ ${escapeHtml(data.error)}</div>`;
+                return;
+            }
+
+            renderTable(data);
+        } catch (err) {
+            tvBody.innerHTML = `<div class="tv-error">❌ Failed to load table: ${escapeHtml(err.message)}</div>`;
+        }
+    }
+
+    function renderTable(data) {
+        const { columns, rows, total_rows, showing } = data;
+
+        // Update row count badge
+        tvRowCount.textContent = total_rows === showing
+            ? `${total_rows} rows`
+            : `Showing ${showing} of ${total_rows} rows`;
+
+        // Build info bar
+        let html = `
+            <div class="tv-info-bar">
+                <div>
+                    <span class="tv-info-badge">${columns.length} columns</span>
+                    <span class="tv-info-badge" style="margin-left:8px">${total_rows} rows</span>
+                </div>
+                ${total_rows > showing ? `<span>Showing first ${showing} rows</span>` : ""}
+            </div>
+        `;
+
+        // Build table
+        html += '<div class="tv-table-wrapper"><table class="data-table">';
+
+        // Header
+        html += "<thead><tr>";
+        html += '<th class="row-num">#</th>';
+        columns.forEach((col) => {
+            html += `<th>${escapeHtml(col)}</th>`;
+        });
+        html += "</tr></thead>";
+
+        // Body
+        html += "<tbody>";
+        if (rows.length === 0) {
+            html += `<tr><td colspan="${columns.length + 1}" style="text-align:center;color:var(--text-muted);padding:40px;">No data in this table</td></tr>`;
+        } else {
+            rows.forEach((row, i) => {
+                html += "<tr>";
+                html += `<td class="row-num">${i + 1}</td>`;
+                row.forEach((cell) => {
+                    if (cell === null || cell === undefined) {
+                        html += '<td><span class="null-value">NULL</span></td>';
+                    } else {
+                        html += `<td>${escapeHtml(String(cell))}</td>`;
+                    }
+                });
+                html += "</tr>";
+            });
+        }
+        html += "</tbody></table></div>";
+
+        tvBody.innerHTML = html;
+    }
+
+    // Close table viewer
+    tvBackBtn.addEventListener("click", closeTableViewer);
+
+    function closeTableViewer() {
+        tableViewer.classList.remove("open");
+        document.querySelectorAll(".table-item").forEach((el) => {
+            el.classList.remove("active");
+        });
+        currentTableName = "";
+    }
+
+    // "Ask AI" button — go back to chat with a pre-filled question
+    tvAskBtn.addEventListener("click", () => {
+        const name = currentTableName;
+        closeTableViewer();
+        userInput.value = `Describe the ${name} table and show me some interesting insights`;
+        userInput.focus();
+    });
+
+    // Close viewer with Escape key
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && tableViewer.classList.contains("open")) {
+            closeTableViewer();
+        }
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  Chat Functionality
+    // ═════════════════════════════════════════════════════════════════════
 
     // ── Auto-resize textarea ─────────────────────────────────────────────
     userInput.addEventListener("input", () => {
@@ -55,6 +191,11 @@
         e.preventDefault();
         const question = userInput.value.trim();
         if (!question || isProcessing) return;
+
+        // Close table viewer if open
+        if (tableViewer.classList.contains("open")) {
+            closeTableViewer();
+        }
 
         // Hide welcome card
         if (welcomeCard) welcomeCard.style.display = "none";
@@ -241,3 +382,4 @@
         }
     }
 })();
+
