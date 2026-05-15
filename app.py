@@ -118,6 +118,38 @@ def tables():
     return jsonify({"tables": db.get_usable_table_names()})
 
 
+@app.route("/api/table/<table_name>", methods=["GET"])
+def table_data(table_name):
+    """Return the columns and rows for a specific table."""
+    allowed = db.get_usable_table_names()
+    if table_name not in allowed:
+        return jsonify({"error": f"Table '{table_name}' not found."}), 404
+
+    try:
+        from sqlalchemy import text
+
+        engine = db._engine
+        with engine.connect() as conn:
+            result = conn.execute(text(f"SELECT * FROM `{table_name}` LIMIT 100"))
+            columns = list(result.keys())
+            rows = [list(row) for row in result.fetchall()]
+
+        # Get total row count
+        with engine.connect() as conn:
+            count_result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
+            total_rows = count_result.scalar()
+
+        return jsonify({
+            "table": table_name,
+            "columns": columns,
+            "rows": rows,
+            "total_rows": total_rows,
+            "showing": len(rows),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     print("\n🚀  Text-to-SQL Chatbot is running at http://localhost:5000\n")
     app.run(debug=True, port=5000)
